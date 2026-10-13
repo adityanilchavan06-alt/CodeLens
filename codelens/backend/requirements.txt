@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+tree-sitter
+tree-sitter-java
+tree-sitter-c
+tree-sitter-cpp
+huggingface_hub>=0.28
+pytest
+httpx2
