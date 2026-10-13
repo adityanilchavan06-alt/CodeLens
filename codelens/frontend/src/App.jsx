@@ -359,6 +359,205 @@ function LinkedSourceExplorer({ code, ast, symbols, output, sourceMap, selectedL
   )
 }
 
+function StageResultModal({ stageId, onClose, stage, targetName, code, editedOutput, onOpenStage, stages }) {
+  const [tab, setTab] = useState('overview')
+  const [stageCopied, setStageCopied] = useState(false)
+  const stageMeta = stages.find((item) => item.id === stageId) || stages[0]
+  const stageResult = stage?.result
+  const index = stages.findIndex((item) => item.id === stageId)
+  const prevStage = index > 0 ? stages[index - 1] : null
+  const nextStage = index < stages.length - 1 ? stages[index + 1] : null
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  async function copyStageResult() {
+    if (!stageResult) return
+    const output = stageId === 'lex'
+      ? JSON.stringify(stageResult.tokens ?? [], null, 2)
+      : stageId === 'parse'
+        ? JSON.stringify(stageResult.ast ?? stageResult ?? {}, null, 2)
+        : stageId === 'semantic'
+          ? JSON.stringify(stageResult, null, 2)
+          : stageId === 'translate'
+            ? (stageResult.code ?? stageResult.java_code ?? '')
+            : (stageResult.code ?? editedOutput ?? '')
+
+    if (!output) return
+    try {
+      await navigator.clipboard.writeText(String(output))
+      setStageCopied(true)
+      window.setTimeout(() => setStageCopied(false), 1600)
+    } catch {
+      // Fallback to manual selection is available for the user.
+    }
+  }
+
+  function renderPanel() {
+    if (!stage) {
+      return <div className="modal-empty">No result is available for this compiler phase yet.</div>
+    }
+
+    if (stageId === 'lex') {
+      const tokens = stageResult?.tokens || []
+      return (
+        <div className="modal-output-panel">
+          <div className="modal-segments" role="tablist" aria-label="Lexical analysis tabs">
+            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Tokens</button>
+            <button className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}>Token details</button>
+            <button className={tab === 'explain' ? 'active' : ''} onClick={() => setTab('explain')}>Explanation</button>
+          </div>
+          {tab === 'overview' && (
+            <div className="token-grid">{tokens.map((token, index) => (<div key={`${token.line}-${token.column}-${index}`} className="token-chip"><span className={`token-type token-${token.type.toLowerCase()}`}>{token.type}</span><code>{token.value === '\n' ? '\\n' : token.value || '—'}</code><small>line {token.line}, col {token.column}</small></div>))}</div>
+          )}
+          {tab === 'details' && (
+            <div className="table-wrap modal-table-wrap">
+              <table><thead><tr><th>TYPE</th><th>VALUE</th><th>LINE</th><th>COLUMN</th></tr></thead><tbody>{tokens.map((token, index) => <tr key={`${token.line}-${token.column}-${index}`}><td><span className={`token-type token-${token.type.toLowerCase()}`}>{token.type}</span></td><td><code className="token-value">{token.value === '\n' ? '\\n' : token.value || '—'}</code></td><td>{token.line}</td><td>{token.column}</td></tr>)}</tbody></table>
+            </div>
+          )}
+          {tab === 'explain' && (
+            <div className="modal-explainer">
+              <p>Lexical analysis turns source text into a sequence of meaningful tokens. A keyword, identifier, number, or operator is recognized before the parser decides how the code should be structured.</p>
+              <p>Use the token list to see how Python statements such as <code>def</code>, <code>return</code>, and <code>print</code> are broken up before the compiler understands them.</p>
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    if (stageId === 'parse') {
+      const ast = stageResult?.ast
+      return (
+        <div className="modal-output-panel">
+          <div className="modal-segments" role="tablist" aria-label="Syntax analysis tabs">
+            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Tree</button>
+            <button className={tab === 'raw' ? 'active' : ''} onClick={() => setTab('raw')}>Raw JSON</button>
+            <button className={tab === 'explain' ? 'active' : ''} onClick={() => setTab('explain')}>Explanation</button>
+          </div>
+          {tab === 'overview' && (ast ? <div className="tree-view"><TreeNode node={ast} selectedLine={null} onSelectLine={() => {}} /></div> : <div className="modal-empty">No syntax tree is available for this translation yet.</div>)}
+          {tab === 'raw' && <pre className="code-block json-block">{JSON.stringify(ast ?? stageResult ?? {}, null, 2)}</pre>}
+          {tab === 'explain' && (
+            <div className="modal-explainer">
+              <p>The parser groups tokens into a tree describing the program structure, such as function definitions, assignments, and calls.</p>
+              <p>When the tree is valid, the later stages can reason about declaration, meaning, and code generation with confidence.</p>
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    if (stageId === 'semantic') {
+      const symbols = stageResult?.symbols || []
+      const warnings = stageResult?.warnings || []
+      return (
+        <div className="modal-output-panel">
+          <div className="modal-segments" role="tablist" aria-label="Semantic analysis tabs">
+            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Symbols</button>
+            <button className={tab === 'warn' ? 'active' : ''} onClick={() => setTab('warn')}>Warnings</button>
+            <button className={tab === 'explain' ? 'active' : ''} onClick={() => setTab('explain')}>Explanation</button>
+          </div>
+          {tab === 'overview' && (
+            <div className="table-wrap modal-table-wrap">
+              <table><thead><tr><th>NAME</th><th>TYPE</th><th>SCOPE</th><th>LINE</th></tr></thead><tbody>{symbols.map((symbol, index) => (<tr key={`${symbol.scope}-${symbol.name}-${index}`}><td><code className="symbol-name">{symbol.name}</code></td><td><span className="type-pill">{symbol.inferred_type}</span></td><td>{symbol.scope}</td><td>{symbol.line}</td></tr>))}</tbody></table>
+              {!symbols.length && <p className="table-empty">No symbols were declared in this program.</p>}
+            </div>
+          )}
+          {tab === 'warn' && (
+            warnings.length ? <ul className="modal-list">{warnings.map((warning, index) => <li key={`${warning.message}-${index}`}>{warning.message}</li>)}</ul> : <div className="modal-empty">No semantic warnings were reported.</div>
+          )}
+          {tab === 'explain' && (
+            <div className="modal-explainer">
+              <p>Semantic analysis connects identifiers to declarations and checks whether the operations being performed are valid for their inferred types.</p>
+              <p>It highlights undefined names, type changes, and other issues before the compiler produces target code.</p>
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    if (stageId === 'translate') {
+      const generated = stageResult?.code || stageResult?.java_code || ''
+      return (
+        <div className="modal-output-panel">
+          <div className="modal-segments" role="tablist" aria-label="Translation tabs">
+            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Generated code</button>
+            <button className={tab === 'explain' ? 'active' : ''} onClick={() => setTab('explain')}>Explanation</button>
+          </div>
+          {tab === 'overview' && (
+            <pre className="code-block">{generated || 'No generated source is available yet.'}</pre>
+          )}
+          {tab === 'explain' && (
+            <div className="modal-explainer">
+              <p>This phase turns the parsed Python structure into target-language source such as Java, C++, or C.</p>
+              <p>The generated code makes the control flow and variable operations explicit so you can compare meaning across languages.</p>
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    const validation = stageResult || {}
+    const diagnostics = validation.diagnostics || []
+    return (
+      <div className="modal-output-panel">
+        <div className="modal-segments" role="tablist" aria-label="Validation tabs">
+          <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Validation</button>
+          <button className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}>Diagnostics</button>
+          <button className={tab === 'explain' ? 'active' : ''} onClick={() => setTab('explain')}>Explanation</button>
+        </div>
+        {tab === 'overview' && (
+          <div className="validation-summary">
+            <div className={`signal ${validation.status || 'pending'}`}>{validation.status === 'success' ? 'Validation passed' : validation.status === 'error' ? 'Validation needs attention' : 'Awaiting validation'}</div>
+            <pre className="code-block">{validation.code || editedOutput || 'No generated code is available for validation yet.'}</pre>
+          </div>
+        )}
+        {tab === 'details' && (
+          diagnostics.length ? <ul className="modal-list">{diagnostics.map((diagnostic, index) => <li key={`${diagnostic.source}-${diagnostic.line}-${index}`}>{diagnostic.source === 'java' ? 'Java' : 'Python'} line {diagnostic.line}: {diagnostic.message}</li>)}</ul> : <div className="modal-empty">No validation diagnostics were reported.</div>
+        )}
+        {tab === 'explain' && (
+          <div className="modal-explainer">
+            <p>Validation checks whether the generated program is syntactically well-formed for the target language.</p>
+            <p>It is not a proof that the Python and Java programs behave the same at runtime; it confirms that the generated result is structurally valid.</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="stage-modal-backdrop" onClick={onClose}>
+      <div className="stage-modal" role="dialog" aria-modal="true" aria-labelledby="phase-modal-title" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <span className="section-kicker">PHASE {stageMeta.number}</span>
+            <h3 id="phase-modal-title">{stageMeta.name}</h3>
+          </div>
+          <div className="modal-actions">
+            <button className="copy-button modal-copy" onClick={copyStageResult}>
+              <Icon name={stageCopied ? 'check' : 'copy'} size={14} /> {stageCopied ? 'Copied' : 'Copy output'}
+            </button>
+            <button className="close-modal" onClick={onClose} aria-label="Close phase details">Close</button>
+          </div>
+        </div>
+        <div className="modal-status-row">
+          <span className={`phase-badge status-${stage?.status || 'pending'}`}>{stage?.status === 'success' ? 'Complete' : stage?.status === 'error' ? 'Error' : 'Waiting'}</span>
+          <span className="stage-detail">{stage?.error || 'Actual compiler output is shown below.'}</span>
+        </div>
+        {renderPanel()}
+        <div className="modal-footer">
+          <button className="nav-button" onClick={() => prevStage && onOpenStage(prevStage.id)} disabled={!prevStage}>Previous phase</button>
+          <button className="nav-button primary" onClick={() => nextStage && onOpenStage(nextStage.id)} disabled={!nextStage}>Next phase</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [code, setCode] = useState(starterCode)
   const [editedOutput, setEditedOutput] = useState('')
@@ -372,6 +571,7 @@ function App() {
   const [sampleError, setSampleError] = useState('')
   const [result, setResult] = useState(null)
   const [activeStage, setActiveStage] = useState('lex')
+  const [modalStageId, setModalStageId] = useState(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [showRawAst, setShowRawAst] = useState(false)
@@ -541,6 +741,13 @@ function App() {
   const semantic = result?.semantic?.result
   const translation = result?.translate?.result
   const validation = result?.validate?.result
+  const phaseIndex = Math.max(0, stages.findIndex((item) => item.id === activeStage))
+  const phaseProgress = Math.round(((phaseIndex + 1) / stages.length) * 100)
+
+  const openStageModal = (stageId) => {
+    setModalStageId(stageId)
+    setActiveStage(stageId)
+  }
 
   return (
     <div className="app-shell">
@@ -664,6 +871,55 @@ function App() {
           </div>
         </section>
 
+        <section className="journey-panel" aria-label="Compiler journey">
+          <div className="journey-header">
+            <div>
+              <span className="section-kicker">COMPILER JOURNEY</span>
+              <h2>Follow the five compiler stages</h2>
+            </div>
+            <div className="journey-progress"><span>Phase {phaseIndex + 1} of {stages.length}</span><strong>{phaseProgress}%</strong></div>
+          </div>
+          <div className="journey-track">
+            {stages.map((item, index) => {
+              const status = result?.[item.id]?.status
+              const isActive = activeStage === item.id
+              const isComplete = status === 'success'
+              const isError = status === 'error'
+              return (
+                <button
+                  key={item.id}
+                  className={`journey-step ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''} ${isError ? 'error' : ''}`}
+                  onClick={() => openStageModal(item.id)}
+                  type="button"
+                >
+                  <span className={`phase-index ${status || 'pending'}`}>{isComplete ? <Icon name="check" size={13} /> : item.number}</span>
+                  <span className="phase-copy">
+                    <strong>{item.name}</strong>
+                    <small>{item.shortName}</small>
+                  </span>
+                  <span className={`phase-status ${status || 'pending'}`}>
+                    {status === 'success' ? 'Completed' : status === 'error' ? 'Error' : index === 0 ? 'Ready' : 'Locked'}
+                  </span>
+                  <span className="phase-link">Explore Results</span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        {modalStageId && (
+          <StageResultModal
+            stageId={modalStageId}
+            stage={result?.[modalStageId]}
+            stages={stages}
+            targetName={targetName}
+            code={code}
+            editedOutput={editedOutput}
+            onOpenStage={openStageModal}
+            onClose={() => setModalStageId(null)}
+          />
+        )}
+
         <FeatureMatrix target={target} />
 
         <section className="pipeline-section" aria-label="Compiler pipeline results">
@@ -677,7 +933,7 @@ function App() {
             {stages.map((item, index) => {
               const status = result?.[item.id]?.status
               return (
-                <button className={`stage-tab ${activeStage === item.id ? 'active' : ''}`} key={item.id} onClick={() => setActiveStage(item.id)} aria-current={activeStage === item.id ? 'step' : undefined}>
+                <button className={`stage-tab ${activeStage === item.id ? 'active' : ''}`} key={item.id} onClick={() => openStageModal(item.id)} aria-current={activeStage === item.id ? 'step' : undefined}>
                   <span className={`stage-number ${status || ''}`}>{status === 'success' ? <Icon name="check" size={13} /> : item.number}</span>
                   <span className="stage-copy"><span>{item.name}</span><StageState status={status} /></span>
                   {index < stages.length - 1 && <span className="tab-connector" />}
